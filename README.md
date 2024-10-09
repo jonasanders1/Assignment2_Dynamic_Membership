@@ -56,8 +56,8 @@ List nodes by load
 
 ## Terminal commands for Putting a value and Getting a value based on keys
 ### PUT 
-```curl -X PUT -H "Content-Type: text/plain" -d 'value1' http://172.21.21.222:10468/storage/testkey1'```
+```curl -X PUT -H "Content-Type: text/plain" -d "myvalue" http://129.242.16.16:5000/storage/mykey```
 ### GET 
-```curl  http://172.21.21.222:10468/storage/testkey1```
+```curl http://129.242.16.16:5000/storage/mykey```
 ### GET Network
 ```curl http://172.21.21.222:10468/network```
