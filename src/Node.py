@@ -80,7 +80,6 @@ class Node:
                     self.update_finger_table()
 
 
-
     # Notify the successor about the new joining node
     def notify_successor(self, successor_address):
         if successor_address and successor_address != self.address:
@@ -270,7 +269,6 @@ class Node:
             return None
 
 
-
 @app.route('/network', methods=['POST'])
 def network_update():
     node_list = request.json['nodes']
@@ -322,7 +320,6 @@ def get_node_info():
     print(f"Returning node info: {response}", flush=True)
     return jsonify(response), 200
 
-
 # Notify predecessor update
 @app.route('/notify', methods=['POST'])
 def notify_predecessor():
@@ -359,7 +356,6 @@ def get_predecessor():
 @app.route('/fingertable', methods=['GET'])
 def get_finger_table():
     return jsonify({'fingertable': node1.finger_table}), 200
-
 
 
 # Run node
