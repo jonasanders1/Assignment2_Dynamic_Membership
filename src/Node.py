@@ -341,10 +341,6 @@ def simulate_crash():
     print(f"Node {node1.address} has crashed", flush=True)
     return jsonify({'message': 'Node has crashed'}), 200
 
-<<<<<<< HEAD
-@app.route('/node-info', methods=['GET'])
-def get_node_info():
-=======
 # Simulate a node recovery
 @app.route('/sim-recover', methods=['POST'])
 def simulate_recovery():
@@ -356,7 +352,6 @@ def simulate_recovery():
 def get_node_info():
     if node1.crashed:
         return jsonify({'error': 'Node is crashed and cannot provide info'}), 500
->>>>>>> 55db448c57d6dc41498e4aa602192f836f392999
 
     others = [node for node in node1.finger_table if node != node1.successor]
 
