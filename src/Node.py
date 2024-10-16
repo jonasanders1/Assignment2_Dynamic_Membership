@@ -230,15 +230,18 @@ def leave_network():
     return jsonify({'message': 'Node has left the network'}), 200
 
 
-
 @app.route('/node-info', methods=['GET'])
 def get_node_info():
+
+    others = [node for node in node1.finger_table if node != node1.successor]
+
     return jsonify({
         'address': node1.address,
         'node_hash': node1.node_id,
         'successor': node1.successor,
         'predecessor': node1.predecessor,
-        'finger_table': node1.finger_table
+        'finger_table': node1.finger_table,
+        'others': others        
     }), 200
 
 @app.route('/update-predecessor', methods=['POST'])
