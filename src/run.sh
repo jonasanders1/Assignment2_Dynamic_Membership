@@ -9,7 +9,7 @@ NUM_SERVERS=$1
 HOSTS=($(/share/ifi/available-nodes.sh))  # Get all the available nodes
 HOST_PORTS=()  # Store host:port combos
 PROJECT_DIR=$PWD
-BASE_PORT=3000
+BASE_PORT=6000
 
 # Start the servers
 for ((i=0; i<$NUM_SERVERS; i++)); do
