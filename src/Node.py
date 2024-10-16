@@ -27,7 +27,7 @@ class Node:
 
 
     
-    # Function to join a network throuth a nprime
+    # function to join a network throuth a nprime
     def join(self, nprime_address):
         if nprime_address == self.address:
             # This node is the first node in the network
@@ -54,7 +54,7 @@ class Node:
                 response.raise_for_status()
 
             # Transfer keys if necessary
-            self.transfer_keys()
+            # self.transfer_keys()
 
             # Update finger table
             self.update_finger_table()
@@ -63,6 +63,27 @@ class Node:
         except Exception as e:
             print(f"Error joining network through {nprime_address}: {e}", flush=True)
 
+
+    # function that handles the process if leaving the network
+    def leave(self):
+        try:
+            # Notify predecessor to update its successor to this node's successor
+            if self.predecessor and self.predecessor != self.address:
+                print(f"Notifying predecessor {self.predecessor} to update successor to {self.successor}", flush=True)
+                requests.post(f"http://{self.predecessor}/update-successor", json={'successor': self.successor})
+
+            # Notify successor to update its predecessor to this node's predecessor
+            if self.successor and self.successor != self.address:
+                print(f"Notifying successor {self.successor} to update predecessor to {self.predecessor}", flush=True)
+                requests.post(f"http://{self.successor}/update-predecessor", json={'predecessor': self.predecessor})
+
+            # Reset node to single-node state (it is no longer part of the DHT ring)
+            self.successor = self.address
+            self.predecessor = None
+            print(f"Node {self.address} has left the network and reset to single-node state.", flush=True)
+
+        except Exception as e:
+            print(f"Error during leave: {e}", flush=True)
 
     
     def stabilize(self):
@@ -121,17 +142,17 @@ class Node:
                 return finger
         return node_info['address']
 
-    def transfer_keys(self):
-        """Transfer keys that should now belong to this node."""
-        if self.successor != self.address:
-            try:
-                response = requests.get(f"http://{self.successor}/transfer-keys/{self.node_id}")
-                keys_to_transfer = response.json()
-                for key, value in keys_to_transfer.items():
-                    self.data_store[key] = value
-                print(f"Transferred {len(keys_to_transfer)} keys from successor", flush=True)
-            except Exception as e:
-                print(f"Error transferring keys from successor: {e}", flush=True)
+    # def transfer_keys(self):
+    #     """Transfer keys that should now belong to this node."""
+    #     if self.successor != self.address:
+    #         try:
+    #             response = requests.get(f"http://{self.successor}/transfer-keys/{self.node_id}")
+    #             keys_to_transfer = response.json()
+    #             for key, value in keys_to_transfer.items():
+    #                 self.data_store[key] = value
+    #             print(f"Transferred {len(keys_to_transfer)} keys from successor", flush=True)
+    #         except Exception as e:
+    #             print(f"Error transferring keys from successor: {e}", flush=True)
 
     def update_finger_table(self):
         """Updates the finger table for a node."""
@@ -202,6 +223,14 @@ def join_network():
     else:
         return jsonify({'error': 'No nprime specified'}), 400
 
+
+@app.route('/leave', methods=['POST'])
+def leave_network():
+    node1.leave()
+    return jsonify({'message': 'Node has left the network'}), 200
+
+
+
 @app.route('/node-info', methods=['GET'])
 def get_node_info():
     return jsonify({
@@ -232,14 +261,14 @@ def get_predecessor():
 def get_successor():
     return jsonify({'successor': node1.successor}), 200
 
-@app.route('/transfer-keys/<int:node_id>', methods=['GET'])
-def transfer_keys(node_id):
-    keys_to_transfer = {}
-    for key, value in list(node1.data_store.items()):
-        if hash_value(key) <= node_id:
-            keys_to_transfer[key] = value
-            del node1.data_store[key]
-    return jsonify(keys_to_transfer), 200
+# @app.route('/transfer-keys/<int:node_id>', methods=['GET'])
+# def transfer_keys(node_id):
+#     keys_to_transfer = {}
+#     for key, value in list(node1.data_store.items()):
+#         if hash_value(key) <= node_id:
+#             keys_to_transfer[key] = value
+#             del node1.data_store[key]
+#     return jsonify(keys_to_transfer), 200
 
 @app.route('/storage/<key>', methods=['PUT'])
 def put_value(key):
