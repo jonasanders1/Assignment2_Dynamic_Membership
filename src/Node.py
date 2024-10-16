@@ -22,13 +22,16 @@ class Node:
         self.predecessor = None
         self.data_store = {}
         self.finger_table = []
-        
+        self.crashed = False  # New flag to simulate a crash
+
         print(f"Initializing node with address {self.address} and ID hash {self.node_id}", flush=True)
 
 
-    
-    # function to join a network throuth a nprime
+    # function to join a network through a nprime
     def join(self, nprime_address):
+        if self.crashed:
+            return "Node is crashed and cannot join the network", 500
+
         if nprime_address == self.address:
             # This node is the first node in the network
             self.predecessor = None
@@ -53,9 +56,6 @@ class Node:
                 response = requests.post(f"http://{self.predecessor}/update-successor", json={'successor': self.address})
                 response.raise_for_status()
 
-            # Transfer keys if necessary
-            # self.transfer_keys()
-
             # Update finger table
             self.update_finger_table()
 
@@ -64,8 +64,11 @@ class Node:
             print(f"Error joining network through {nprime_address}: {e}", flush=True)
 
 
-    # function that handles the process if leaving the network
+    # function that handles the process of leaving the network
     def leave(self):
+        if self.crashed:
+            return "Node is crashed and cannot leave the network", 500
+
         try:
             # Notify predecessor to update its successor to this node's successor
             if self.predecessor and self.predecessor != self.address:
@@ -86,11 +89,59 @@ class Node:
             print(f"Error during leave: {e}", flush=True)
 
     
+    # def stabilize(self):
+    #     if self.crashed:
+    #         return "Node is crashed and cannot stabilize", 500
+
+    #     """Periodically checks the successor's predecessor and updates if needed."""
+    #     try:
+    #         # Attempt to get successor's predecessor
+    #         response = requests.get(f"http://{self.successor}/predecessor", timeout=5)  # Timeout to detect failure
+    #         response.raise_for_status()
+    #         successor_predecessor = response.json()['predecessor']
+
+    #         # If the successor's predecessor is between this node and the successor, update the successor
+    #         if successor_predecessor and hash_value(successor_predecessor) > hash_value(self.address) and hash_value(successor_predecessor) < hash_value(self.successor):
+    #             self.successor = successor_predecessor
+
+    #         # Notify the successor about this node
+    #         response = requests.post(f"http://{self.successor}/update-predecessor", json={'predecessor': self.address}, timeout=5)
+    #         response.raise_for_status()
+
+    #         print(f"Stabilization complete for node {self.address}. Successor is {self.successor}", flush=True)
+
+    #     except requests.exceptions.RequestException as e:
+    #         # If successor is unresponsive (e.g., crashed), update successor to its next available node
+    #         print(f"Error stabilizing: {e}. Assuming successor {self.successor} is down.", flush=True)
+
+    #         # Here we bypass the crashed node (current successor) and find the next live node
+    #         try:
+    #             # Contact the successor's successor
+    #             response = requests.get(f"http://{self.successor}/successor", timeout=5)
+    #             response.raise_for_status()
+    #             new_successor = response.json()['successor']
+
+    #             # Update this node's successor
+    #             self.successor = new_successor
+
+    #             # Notify the new successor that this node is now its predecessor
+    #             response = requests.post(f"http://{self.successor}/update-predecessor", json={'predecessor': self.address}, timeout=5)
+    #             response.raise_for_status()
+
+    #             print(f"Updated successor for node {self.address} to {self.successor} after detecting crash.", flush=True)
+            
+    #         except requests.exceptions.RequestException as e2:
+    #             print(f"Error contacting next successor: {e2}. The network may be disconnected.", flush=True)
+
+
     def stabilize(self):
+        if self.crashed:
+            return "Node is crashed and cannot stabilize", 500
+
         """Periodically checks the successor's predecessor and updates if needed."""
         try:
-            # Get successor's predecessor
-            response = requests.get(f"http://{self.successor}/predecessor")
+            # Attempt to get successor's predecessor
+            response = requests.get(f"http://{self.successor}/predecessor", timeout=5)  # Timeout to detect failure
             response.raise_for_status()
             successor_predecessor = response.json()['predecessor']
 
@@ -99,22 +150,64 @@ class Node:
                 self.successor = successor_predecessor
 
             # Notify the successor about this node
-            response = requests.post(f"http://{self.successor}/update-predecessor", json={'predecessor': self.address})
+            response = requests.post(f"http://{self.successor}/update-predecessor", json={'predecessor': self.address}, timeout=5)
             response.raise_for_status()
 
             print(f"Stabilization complete for node {self.address}. Successor is {self.successor}", flush=True)
-        except Exception as e:
-            print(f"Error in stabilization: {e}", flush=True)
 
+        except requests.exceptions.RequestException as e:
+            # If successor is unresponsive (e.g., crashed), update successor to its next available node
+            print(f"Error stabilizing: {e}. Assuming successor {self.successor} is down.", flush=True)
+
+            # Here we bypass the crashed node (current successor) and find the next live node
+            try:
+                # Find the next live node in the finger table or get a new successor
+                new_successor = self.find_next_live_successor()
+                if new_successor:
+                    self.successor = new_successor
+
+                    # Notify the new successor that this node is now its predecessor
+                    response = requests.post(f"http://{self.successor}/update-predecessor", json={'predecessor': self.address}, timeout=5)
+                    response.raise_for_status()
+
+                    print(f"Updated successor for node {self.address} to {self.successor} after detecting crash.", flush=True)
+                else:
+                    print(f"Failed to find a live successor for node {self.address}.", flush=True)
+
+            except requests.exceptions.RequestException as e2:
+                print(f"Error contacting next successor: {e2}. The network may be disconnected.", flush=True)
+
+
+    def find_next_live_successor(self):
+        """Attempt to find the next live node in the finger table or using the crashed node's successor."""
+        try:
+            # Try contacting the current successor's successor
+            response = requests.get(f"http://{self.successor}/successor", timeout=5)
+            response.raise_for_status()
+            return response.json()['successor']
+        except requests.exceptions.RequestException:
+            # If contacting the successor's successor fails, try finding the next valid node in the finger table
+            for finger in self.finger_table:
+                try:
+                    response = requests.get(f"http://{finger}/node-info", timeout=5)
+                    response.raise_for_status()
+                    return finger  # Return the first valid node
+                except requests.exceptions.RequestException:
+                    # Skip to the next finger if this node is also unresponsive
+                    continue
+            return None  # Return None if no valid node was found
 
 
     def find_successor(self, key_hash, start_node=None):
+        if self.crashed:
+            return "Node is crashed and cannot find a successor", 500
+
         """Find the successor of the given key hash."""
         if start_node is None:
             start_node = self.address
 
         try:
-            response = requests.get(f"http://{start_node}/node-info")
+            response = requests.get(f"http://{start_node}/node-info", timeout=5)  # Add a timeout
             response.raise_for_status()
             node_info = response.json()
 
@@ -130,9 +223,18 @@ class Node:
                 if closest_preceding_node == node_info['address']:
                     return node_info['successor']
                 return self.find_successor(key_hash, closest_preceding_node)
-        except Exception as e:
-            print(f"Error in find_successor: {e}", flush=True)
+
+        except requests.exceptions.RequestException as e:
+            print(f"Error in find_successor: {e}. Assuming node {start_node} is down.", flush=True)
+            # Try to bypass the unresponsive node and find the next available node
+            try:
+                response = requests.get(f"http://{self.successor}/successor", timeout=5)
+                response.raise_for_status()
+                return response.json()['successor']
+            except requests.exceptions.RequestException as e2:
+                print(f"Error contacting next node: {e2}.", flush=True)
             return None
+
 
 
     def find_closest_preceding_node(self, key_hash, node_info):
@@ -142,19 +244,10 @@ class Node:
                 return finger
         return node_info['address']
 
-    # def transfer_keys(self):
-    #     """Transfer keys that should now belong to this node."""
-    #     if self.successor != self.address:
-    #         try:
-    #             response = requests.get(f"http://{self.successor}/transfer-keys/{self.node_id}")
-    #             keys_to_transfer = response.json()
-    #             for key, value in keys_to_transfer.items():
-    #                 self.data_store[key] = value
-    #             print(f"Transferred {len(keys_to_transfer)} keys from successor", flush=True)
-    #         except Exception as e:
-    #             print(f"Error transferring keys from successor: {e}", flush=True)
-
     def update_finger_table(self):
+        if self.crashed:
+            return "Node is crashed and cannot update the finger table", 500
+
         """Updates the finger table for a node."""
         m = 160  # number of finger entries due to SHA-1 hashing
         
@@ -170,6 +263,9 @@ class Node:
         print(f"Finger table for node {self.address} updated: {self.finger_table}", flush=True)
 
     def put(self, key, value):
+        if self.crashed:
+            return "Node is crashed and cannot accept PUT requests", 500
+
         """Store a key-value pair in the DHT."""
         key_hash = hash_value(key)
         print(f"Storing key: {key}, hash: {key_hash} at node {self.address}", flush=True)
@@ -190,6 +286,9 @@ class Node:
                 return str(e)
 
     def get(self, key):
+        if self.crashed:
+            return "Node is crashed and cannot accept GET requests", 500
+
         """Retrieve a value for a given key from the DHT."""
         key_hash = hash_value(key)
         print(f"Retrieving key: {key}, hash: {key_hash} from node {self.address}", flush=True)
@@ -216,6 +315,9 @@ class Node:
 # Flask Routes
 @app.route('/join', methods=['POST'])
 def join_network():
+    if node1.crashed:
+        return jsonify({'error': 'Node is crashed and cannot join the network'}), 500
+
     nprime = request.args.get('nprime')
     if nprime:
         node1.join(nprime)
@@ -226,58 +328,88 @@ def join_network():
 
 @app.route('/leave', methods=['POST'])
 def leave_network():
+    if node1.crashed:
+        return jsonify({'error': 'Node is crashed and cannot leave the network'}), 500
+
     node1.leave()
     return jsonify({'message': 'Node has left the network'}), 200
 
+# Simulate a node crash
+@app.route('/sim-crash', methods=['POST'])
+def simulate_crash():
+    node1.crashed = True
+    print(f"Node {node1.address} has crashed", flush=True)
+    return jsonify({'message': 'Node has crashed'}), 200
 
+# Simulate a node recovery
+@app.route('/sim-recover', methods=['POST'])
+def simulate_recovery():
+    node1.crashed = False
+    print(f"Node {node1.address} has recovered", flush=True)
+    return jsonify({'message': 'Node has recovered'}), 200
 
 @app.route('/node-info', methods=['GET'])
 def get_node_info():
+    if node1.crashed:
+        return jsonify({'error': 'Node is crashed and cannot provide info'}), 500
+
+    others = [node for node in node1.finger_table if node != node1.successor]
+
     return jsonify({
         'address': node1.address,
         'node_hash': node1.node_id,
         'successor': node1.successor,
         'predecessor': node1.predecessor,
-        'finger_table': node1.finger_table
+        'finger_table': node1.finger_table,
+        'others': others        
     }), 200
 
 @app.route('/update-predecessor', methods=['POST'])
 def update_predecessor():
+    if node1.crashed:
+        return jsonify({'error': 'Node is crashed and cannot update predecessor'}), 500
+
     new_predecessor = request.json['predecessor']
     node1.predecessor = new_predecessor
     return jsonify({'message': 'Predecessor updated'}), 200
 
 @app.route('/update-successor', methods=['POST'])
 def update_successor():
+    if node1.crashed:
+        return jsonify({'error': 'Node is crashed and cannot update successor'}), 500
+
     new_successor = request.json['successor']
     node1.successor = new_successor
     return jsonify({'message': 'Successor updated'}), 200
 
 @app.route('/predecessor', methods=['GET'])
 def get_predecessor():
+    if node1.crashed:
+        return jsonify({'error': 'Node is crashed and cannot get predecessor'}), 500
+
     return jsonify({'predecessor': node1.predecessor}), 200
 
 @app.route('/successor', methods=['GET'])
 def get_successor():
-    return jsonify({'successor': node1.successor}), 200
+    if node1.crashed:
+        return jsonify({'error': 'Node is crashed and cannot get successor'}), 500
 
-# @app.route('/transfer-keys/<int:node_id>', methods=['GET'])
-# def transfer_keys(node_id):
-#     keys_to_transfer = {}
-#     for key, value in list(node1.data_store.items()):
-#         if hash_value(key) <= node_id:
-#             keys_to_transfer[key] = value
-#             del node1.data_store[key]
-#     return jsonify(keys_to_transfer), 200
+    return jsonify({'successor': node1.successor}), 200
 
 @app.route('/storage/<key>', methods=['PUT'])
 def put_value(key):
+    if node1.crashed:
+        return jsonify({'error': 'Node is crashed and cannot store values'}), 500
+
     value = request.data.decode('utf-8')
     response = node1.put(key, value)
     return Response(response, content_type='text/plain'), 200
 
 @app.route('/storage/<key>', methods=['GET'])
 def get_value(key):
+    if node1.crashed:
+        return jsonify({'error': 'Node is crashed and cannot retrieve values'}), 500
+
     value = node1.get(key)
     if value is not None:
         return Response(value, content_type='text/plain'), 200
@@ -286,10 +418,16 @@ def get_value(key):
 
 @app.route('/fingertable', methods=['GET'])
 def get_finger_table():
+    if node1.crashed:
+        return jsonify({'error': 'Node is crashed and cannot get finger table'}), 500
+
     return jsonify({'fingertable': node1.finger_table}), 200
 
 @app.route('/helloworld', methods=['GET'])
 def helloworld():
+    if node1.crashed:
+        return jsonify({'error': 'Node is crashed and cannot respond to requests'}), 500
+
     return node1.address, 200
 
 if __name__ == '__main__':
@@ -307,7 +445,8 @@ if __name__ == '__main__':
 
     def stabilization_task():
         while True:
-            node1.stabilize()
+            if not node1.crashed:
+                node1.stabilize()
             time.sleep(10)  # Run stabilize every 10 seconds
 
     # Start stabilization in a background thread
@@ -317,4 +456,3 @@ if __name__ == '__main__':
 
     # Start the Flask server
     app.run(host="0.0.0.0", port=port)
-
