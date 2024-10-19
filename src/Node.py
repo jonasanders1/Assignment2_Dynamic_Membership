@@ -15,7 +15,7 @@ def hash_value(value):
 class Node:
     
     # initializing a node
-    def __init__(self, address):
+    def __init__(self, address, r = 3):
         self.node_id = hash_value(address)
         self.address = address
         self.successor = self.address
@@ -23,6 +23,7 @@ class Node:
         self.data_store = {}
         self.finger_table = []
         self.crashed = False  # New flag to simulate a crash
+        self.successor_list = [self.address] * r
 
         print(f"Initializing node with address {self.address} and ID hash {self.node_id}", flush=True)
 
@@ -141,7 +142,7 @@ class Node:
         """Periodically checks the successor's predecessor and updates if needed."""
         try:
             # Attempt to get successor's predecessor
-            response = requests.get(f"http://{self.successor}/predecessor", timeout=5)  # Timeout to detect failure
+            response = requests.get(f"http://{self.successor}/predecessor", timeout=5)
             response.raise_for_status()
             successor_predecessor = response.json()['predecessor']
 
@@ -149,53 +150,62 @@ class Node:
             if successor_predecessor and hash_value(successor_predecessor) > hash_value(self.address) and hash_value(successor_predecessor) < hash_value(self.successor):
                 self.successor = successor_predecessor
 
+            # Update the successor list with the current successor's successor list
+            response = requests.get(f"http://{self.successor}/successor-list", timeout=5)
+            response.raise_for_status()
+            successor_successor_list = response.json()['successor_list']
+            self.successor_list = [self.successor] + successor_successor_list[:-1]  # Update our successor list
+
             # Notify the successor about this node
             response = requests.post(f"http://{self.successor}/update-predecessor", json={'predecessor': self.address}, timeout=5)
             response.raise_for_status()
 
+            self.update_finger_table()
+
             print(f"Stabilization complete for node {self.address}. Successor is {self.successor}", flush=True)
 
         except requests.exceptions.RequestException as e:
-            # If successor is unresponsive (e.g., crashed), update successor to its next available node
             print(f"Error stabilizing: {e}. Assuming successor {self.successor} is down.", flush=True)
+            self.handle_successor_failure()
 
-            # Here we bypass the crashed node (current successor) and find the next live node
+    def handle_successor_failure(self):
+        """Handle the case when the current successor is unresponsive."""
+        # Try to find the next live node from the successor list
+        for successor in self.successor_list[1:]:  # Skip the current (failed) successor
             try:
-                # Find the next live node in the finger table or get a new successor
-                new_successor = self.find_next_live_successor()
-                if new_successor:
-                    self.successor = new_successor
+                response = requests.get(f"http://{successor}/node-info", timeout=5)
+                response.raise_for_status()
+                self.successor = successor
+                print(f"Updated successor for node {self.address} to {self.successor} after detecting crash.", flush=True)
 
-                    # Notify the new successor that this node is now its predecessor
-                    response = requests.post(f"http://{self.successor}/update-predecessor", json={'predecessor': self.address}, timeout=5)
-                    response.raise_for_status()
+                # Notify the new successor that this node is now its predecessor
+                response = requests.post(f"http://{self.successor}/update-predecessor", json={'predecessor': self.address}, timeout=5)
+                response.raise_for_status()
 
-                    print(f"Updated successor for node {self.address} to {self.successor} after detecting crash.", flush=True)
-                else:
-                    print(f"Failed to find a live successor for node {self.address}.", flush=True)
+                # Update successor list
+                self.update_successor_list()
+                return
+            except requests.exceptions.RequestException:
+                continue  # Try the next successor in the list
 
-            except requests.exceptions.RequestException as e2:
-                print(f"Error contacting next successor: {e2}. The network may be disconnected.", flush=True)
+        print(f"All successors in the list are unresponsive for node {self.address}.", flush=True)
 
-
-    def find_next_live_successor(self):
-        """Attempt to find the next live node in the finger table or using the crashed node's successor."""
+    def update_successor_list(self):
+        """Update the successor list by contacting the current successor."""
         try:
-            # Try contacting the current successor's successor
-            response = requests.get(f"http://{self.successor}/successor", timeout=5)
+            response = requests.get(f"http://{self.successor}/successor-list", timeout=5)
             response.raise_for_status()
-            return response.json()['successor']
-        except requests.exceptions.RequestException:
-            # If contacting the successor's successor fails, try finding the next valid node in the finger table
-            for finger in self.finger_table:
-                try:
-                    response = requests.get(f"http://{finger}/node-info", timeout=5)
-                    response.raise_for_status()
-                    return finger  # Return the first valid node
-                except requests.exceptions.RequestException:
-                    # Skip to the next finger if this node is also unresponsive
-                    continue
-            return None  # Return None if no valid node was found
+            successor_successor_list = response.json()['successor_list']
+            self.successor_list = [self.successor] + successor_successor_list[:-1]
+            print(f"Updated successor list for node {self.address}: {self.successor_list}", flush=True)
+        except requests.exceptions.RequestException as e:
+            print(f"Failed to update successor list for node {self.address}: {e}", flush=True)
+
+    def get_successor_list(self):
+        if self.crashed:
+            return jsonify({'error': 'Node is crashed and cannot get successor list'}), 500
+
+        return jsonify({'successor_list': self.successor_list}), 200
 
 
     def find_successor(self, key_hash, start_node=None):
@@ -346,7 +356,19 @@ def simulate_crash():
 def simulate_recovery():
     node1.crashed = False
     print(f"Node {node1.address} has recovered", flush=True)
-    return jsonify({'message': 'Node has recovered'}), 200
+
+    # Attempt to rejoin the network if the node had previously known a valid successor
+    if node1.successor != node1.address:  # Check if there was a previous known successor
+        try:
+            print(f"Attempting to rejoin the network through previous successor {node1.successor}", flush=True)
+            # Sending a join request to the previous known successor
+            response = requests.post(f"http://{node1.successor}/join", params={'nprime': node1.address})
+            response.raise_for_status()
+            print(f"Rejoined the network successfully through {node1.successor}", flush=True)
+        except requests.exceptions.RequestException as e:
+            print(f"Failed to rejoin the network through {node1.successor}: {e}", flush=True)
+
+    return jsonify({'message': 'Node has recovered and attempted to rejoin the network'}), 200
 
 @app.route('/node-info', methods=['GET'])
 def get_node_info():
@@ -361,8 +383,13 @@ def get_node_info():
         'successor': node1.successor,
         'predecessor': node1.predecessor,
         'finger_table': node1.finger_table,
-        'others': others        
+        'others': others,
+        'successor_list': node1.successor_list    
     }), 200
+
+@app.route('/successor-list', methods=['GET'])
+def get_successor_list():
+    return node1.get_successor_list()
 
 @app.route('/update-predecessor', methods=['POST'])
 def update_predecessor():
