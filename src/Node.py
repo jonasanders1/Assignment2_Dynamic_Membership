@@ -361,12 +361,40 @@ def simulate_recovery():
     if node1.successor != node1.address:  # Check if there was a previous known successor
         try:
             print(f"Attempting to rejoin the network through previous successor {node1.successor}", flush=True)
-            # Sending a join request to the previous known successor
-            response = requests.post(f"http://{node1.successor}/join", params={'nprime': node1.address})
+            
+            # Update the successor by finding the correct one for this node's ID
+            node1.successor = node1.find_successor(node1.node_id, node1.successor)
+            
+            # Get and update the predecessor of this node
+            response = requests.get(f"http://{node1.successor}/predecessor")
             response.raise_for_status()
+            node1.predecessor = response.json()['predecessor']
+            
+            # Notify successor and predecessor about the updates
+            if node1.successor:
+                response = requests.post(f"http://{node1.successor}/update-predecessor", json={'predecessor': node1.address})
+                response.raise_for_status()
+
+            if node1.predecessor:
+                response = requests.post(f"http://{node1.predecessor}/update-successor", json={'successor': node1.address})
+                response.raise_for_status()
+
+            # Explicitly call stabilize and update finger table after rejoining
+            node1.stabilize()
+            node1.update_finger_table()
+            node1.update_successor_list()
+
             print(f"Rejoined the network successfully through {node1.successor}", flush=True)
+
         except requests.exceptions.RequestException as e:
             print(f"Failed to rejoin the network through {node1.successor}: {e}", flush=True)
+
+        # Perform stabilization to ensure the network is consistent
+        node1.stabilize()
+    else:
+        # Handle single-node network case
+        node1.predecessor = None
+        node1.successor_list = [node1.address] * len(node1.successor_list)
 
     return jsonify({'message': 'Node has recovered and attempted to rejoin the network'}), 200
 
