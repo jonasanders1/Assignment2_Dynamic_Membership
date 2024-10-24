@@ -15,7 +15,7 @@ def hash_value(value):
 class Node:
     
     # initializing a node
-    def __init__(self, address, r = 3):
+    def __init__(self, address, r = 8):
         self.node_id = hash_value(address)
         self.address = address
         self.successor = self.address
