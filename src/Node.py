@@ -34,21 +34,18 @@ class Node:
             return "Node is crashed and cannot join the network", 500
 
         if nprime_address == self.address:
-            # This node is the first node in the network
             self.predecessor = None
             self.successor = self.address
             return
 
         try:
-            # Find the correct position for this node
+
             self.successor = self.find_successor(self.node_id, nprime_address)
             
-            # Get and update this node's predecessor
             response = requests.get(f"http://{self.successor}/predecessor")
             response.raise_for_status()
             self.predecessor = response.json()['predecessor']
-            
-            # Notify successor and predecessor about the updates
+
             if self.successor:
                 response = requests.post(f"http://{self.successor}/update-predecessor", json={'predecessor': self.address})
                 response.raise_for_status()
@@ -57,7 +54,6 @@ class Node:
                 response = requests.post(f"http://{self.predecessor}/update-successor", json={'successor': self.address})
                 response.raise_for_status()
 
-            # Update finger table
             self.update_finger_table()
 
             print(f"Node {self.address} joined the network through {nprime_address}", flush=True)
@@ -141,22 +137,18 @@ class Node:
 
         """Periodically checks the successor's predecessor and updates if needed."""
         try:
-            # Attempt to get successor's predecessor
             response = requests.get(f"http://{self.successor}/predecessor", timeout=5)
             response.raise_for_status()
             successor_predecessor = response.json()['predecessor']
 
-            # If the successor's predecessor is between this node and the successor, update the successor
             if successor_predecessor and hash_value(successor_predecessor) > hash_value(self.address) and hash_value(successor_predecessor) < hash_value(self.successor):
                 self.successor = successor_predecessor
 
-            # Update the successor list with the current successor's successor list
             response = requests.get(f"http://{self.successor}/successor-list", timeout=5)
             response.raise_for_status()
             successor_successor_list = response.json()['successor_list']
             self.successor_list = [self.successor] + successor_successor_list[:-1]  # Update our successor list
 
-            # Notify the successor about this node
             response = requests.post(f"http://{self.successor}/update-predecessor", json={'predecessor': self.address}, timeout=5)
             response.raise_for_status()
 
@@ -171,22 +163,20 @@ class Node:
     def handle_successor_failure(self):
         """Handle the case when the current successor is unresponsive."""
         # Try to find the next live node from the successor list
-        for successor in self.successor_list[1:]:  # Skip the current (failed) successor
+        for successor in self.successor_list[1:]: 
             try:
                 response = requests.get(f"http://{successor}/node-info", timeout=5)
                 response.raise_for_status()
                 self.successor = successor
                 print(f"Updated successor for node {self.address} to {self.successor} after detecting crash.", flush=True)
 
-                # Notify the new successor that this node is now its predecessor
                 response = requests.post(f"http://{self.successor}/update-predecessor", json={'predecessor': self.address}, timeout=5)
                 response.raise_for_status()
 
-                # Update successor list
                 self.update_successor_list()
                 return
             except requests.exceptions.RequestException:
-                continue  # Try the next successor in the list
+                continue 
 
         print(f"All successors in the list are unresponsive for node {self.address}.", flush=True)
 
@@ -357,20 +347,16 @@ def simulate_recovery():
     node1.crashed = False
     print(f"Node {node1.address} has recovered", flush=True)
 
-    # Attempt to rejoin the network if the node had previously known a valid successor
-    if node1.successor != node1.address:  # Check if there was a previous known successor
+    if node1.successor != node1.address: 
         try:
             print(f"Attempting to rejoin the network through previous successor {node1.successor}", flush=True)
-            
-            # Update the successor by finding the correct one for this node's ID
+
             node1.successor = node1.find_successor(node1.node_id, node1.successor)
-            
-            # Get and update the predecessor of this node
+
             response = requests.get(f"http://{node1.successor}/predecessor")
             response.raise_for_status()
             node1.predecessor = response.json()['predecessor']
-            
-            # Notify successor and predecessor about the updates
+
             if node1.successor:
                 response = requests.post(f"http://{node1.successor}/update-predecessor", json={'predecessor': node1.address})
                 response.raise_for_status()
@@ -379,7 +365,6 @@ def simulate_recovery():
                 response = requests.post(f"http://{node1.predecessor}/update-successor", json={'successor': node1.address})
                 response.raise_for_status()
 
-            # Explicitly call stabilize and update finger table after rejoining
             node1.stabilize()
             node1.update_finger_table()
             node1.update_successor_list()
@@ -389,10 +374,8 @@ def simulate_recovery():
         except requests.exceptions.RequestException as e:
             print(f"Failed to rejoin the network through {node1.successor}: {e}", flush=True)
 
-        # Perform stabilization to ensure the network is consistent
         node1.stabilize()
     else:
-        # Handle single-node network case
         node1.predecessor = None
         node1.successor_list = [node1.address] * len(node1.successor_list)
 
